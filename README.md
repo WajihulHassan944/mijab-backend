@@ -182,6 +182,28 @@ on failure.
 - Order IDs are sequential and human-friendly (`MJB-10483`, `MJB-10484`, ...),
   generated via an atomic counter.
 
+## Realtime (Pusher) and email (Brevo)
+
+Both are optional — `src/utils/pusher.js` and `src/utils/email.js` silently
+no-op if their env vars aren't set, and every call they make is wrapped so a
+Pusher/Brevo outage can never fail an API request.
+
+**Pusher channels**: `mijab-admin` gets `order:new` and `message:new` events
+(for an admin dashboard); `mijab-order-<id>` gets `order:update` (for a
+single order's tracking page, so a status change shows up live without
+polling). The frontend only needs the public `key` + `cluster` to subscribe.
+
+**Brevo emails**:
+- Order confirmation → the customer, always, on every order.
+- Reply email → the customer, when an admin replies to their contact message.
+- New order / low stock / new message alerts → `settings.email` (the address
+  configured in `/api/admin/settings`), gated by that settings document's
+  `notifyOrders` / `notifyLowStock` / `notifyMessages` flags respectively.
+  Low stock is evaluated per order line against `settings.lowStockAt`.
+
+`BREVO_SENDER_EMAIL` must be a sender verified in your Brevo account, or
+every send will fail.
+
 ## Notes
 
 - Mongo connections are cached on the Node global object (`src/db.js`) so

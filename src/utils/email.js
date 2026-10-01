@@ -72,4 +72,43 @@ function sendMessageReply(message) {
   return sendEmail({ to: message.email, toName: message.name, subject: `Re: ${message.subject} — MIJAB`, html });
 }
 
-module.exports = { sendEmail, sendOrderConfirmation, sendMessageReply };
+function sendAdminNewOrderAlert(order, adminEmail) {
+  const itemsText = order.lines.map((l) => `${l.name} × ${l.qty}`).join(", ");
+  const html = `
+    <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+      <h2 style="margin-bottom:0">New order: ${order.id}</h2>
+      <p style="color:#555">${money(order.total)} from ${order.name} (${order.email})</p>
+      <p>${itemsText}</p>
+      <p style="color:#555">Delivering to: ${order.address}, ${order.city}<br/>Payment: ${order.payment}</p>
+    </div>`;
+  return sendEmail({ to: adminEmail, subject: `New order ${order.id} — ${money(order.total)}`, html });
+}
+
+function sendAdminLowStockAlert(products, adminEmail) {
+  const rows = products.map((p) => `<tr><td style="padding:4px 0">${p.name}</td><td style="padding:4px 0;text-align:right">${p.stock} left</td></tr>`).join("");
+  const html = `
+    <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+      <h2 style="margin-bottom:0">Low stock alert</h2>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0">${rows}</table>
+    </div>`;
+  return sendEmail({ to: adminEmail, subject: `Low stock: ${products.map((p) => p.name).join(", ")}`, html });
+}
+
+function sendAdminNewMessageAlert(message, adminEmail) {
+  const html = `
+    <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+      <h2 style="margin-bottom:0">New message: ${message.subject}</h2>
+      <p style="color:#555">From ${message.name} (${message.email})</p>
+      <p style="white-space:pre-wrap">${message.body}</p>
+    </div>`;
+  return sendEmail({ to: adminEmail, subject: `New message: ${message.subject}`, html });
+}
+
+module.exports = {
+  sendEmail,
+  sendOrderConfirmation,
+  sendMessageReply,
+  sendAdminNewOrderAlert,
+  sendAdminLowStockAlert,
+  sendAdminNewMessageAlert,
+};

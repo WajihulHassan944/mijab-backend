@@ -12,7 +12,7 @@ const { validateBody } = require("../utils/validate");
 const { protect, optionalAuth } = require("../middleware/auth");
 const { publicWriteLimiter } = require("../middleware/rateLimit");
 const { notifyNewOrder, notifyOrderUpdate } = require("../utils/pusher");
-const { sendOrderConfirmation } = require("../utils/email");
+const { sendOrderConfirmation, sendAdminNewOrderAlert, sendAdminLowStockAlert } = require("../utils/email");
 
 const router = express.Router();
 
@@ -47,8 +47,13 @@ router.post(
 
     const session = await mongoose.startSession();
     let order;
+    let settingsSnapshot;
+    const lowStockHits = [];
     try {
       await session.withTransaction(async () => {
+        const settings = await Settings.getSingleton();
+        settingsSnapshot = settings;
+
         const orderLines = [];
         let subtotal = 0;
 
@@ -66,6 +71,7 @@ router.post(
           }
           orderLines.push({ productId: updated.slug, name: updated.name, price: updated.price, qty: line.qty });
           subtotal += updated.price * line.qty;
+          if (updated.stock <= settings.lowStockAt) lowStockHits.push({ name: updated.name, stock: updated.stock });
         }
 
         let discount = 0;
@@ -79,7 +85,6 @@ router.post(
           await promo.save({ session });
         }
 
-        const settings = await Settings.getSingleton();
         let delivery = settings.deliveryFee;
         if (settings.freeOver > 0 && subtotal >= settings.freeOver) delivery = 0;
 
@@ -116,9 +121,13 @@ router.post(
 
     const publicOrder = order.toPublic();
     // Awaited (not true fire-and-forget) so these finish before the
-    // serverless function freezes post-response; both helpers swallow their
-    // own errors, so a Pusher/Brevo outage never fails order placement.
-    await Promise.all([notifyNewOrder(publicOrder), sendOrderConfirmation(publicOrder)]);
+    // serverless function freezes post-response; every helper below
+    // swallows its own errors, so a Pusher/Brevo outage never fails order
+    // placement.
+    const sideEffects = [notifyNewOrder(publicOrder), sendOrderConfirmation(publicOrder)];
+    if (settingsSnapshot?.notifyOrders) sideEffects.push(sendAdminNewOrderAlert(publicOrder, settingsSnapshot.email));
+    if (settingsSnapshot?.notifyLowStock && lowStockHits.length) sideEffects.push(sendAdminLowStockAlert(lowStockHits, settingsSnapshot.email));
+    await Promise.all(sideEffects);
 
     res.status(201).json({ ok: true, order: publicOrder });
   }),
