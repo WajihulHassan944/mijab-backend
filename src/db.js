@@ -10,8 +10,20 @@ if (!cached) {
   cached = global._mijabMongoose = { conn: null, promise: null };
 }
 
+// Mongoose connection readyState: 0 disconnected, 1 connected, 2 connecting, 3 disconnecting.
+const READY = 1;
+
 async function connectDB() {
-  if (cached.conn) return cached.conn;
+  // A warm serverless container can hold a cached connection that Atlas has
+  // since dropped (idle timeout, network blip). Trusting cached.conn without
+  // checking readyState left every query silently stuck in Mongoose's
+  // command buffer until it timed out — this is what was failing in
+  // production. Treat anything but a live, connected state as stale.
+  if (cached.conn && mongoose.connection.readyState === READY) return cached.conn;
+  if (cached.conn && mongoose.connection.readyState !== READY) {
+    cached.conn = null;
+    cached.promise = null;
+  }
 
   const uri = process.env.MONGODB_URI;
   if (!uri) {
