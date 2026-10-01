@@ -26,6 +26,7 @@ const loginSchema = z.object({
 
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(80).optional(),
+  email: z.string().trim().email().toLowerCase().optional(),
   phone: z.string().trim().max(30).optional(),
   address: z.string().trim().max(200).optional(),
   city: z.string().trim().max(80).optional(),
