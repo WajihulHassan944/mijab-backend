@@ -4,6 +4,7 @@ const Message = require("../models/Message");
 const asyncHandler = require("../utils/asyncHandler");
 const { validateBody } = require("../utils/validate");
 const { publicWriteLimiter } = require("../middleware/rateLimit");
+const { notifyNewMessage } = require("../utils/pusher");
 
 const router = express.Router();
 
@@ -21,6 +22,15 @@ router.post(
   validateBody(contactSchema),
   asyncHandler(async (req, res) => {
     const message = await Message.create({ ...req.body, state: "unread" });
+    await notifyNewMessage({
+      id: message._id,
+      name: message.name,
+      email: message.email,
+      subject: message.subject,
+      body: message.body,
+      createdAt: message.createdAt,
+      state: message.state,
+    });
     res.status(201).json({ ok: true, id: message._id });
   }),
 );

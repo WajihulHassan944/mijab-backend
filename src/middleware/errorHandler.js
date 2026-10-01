@@ -28,6 +28,10 @@ function errorHandler(err, req, res, next) {
     return res.status(401).json({ ok: false, error: "Invalid or expired session, please sign in again" });
   }
 
+  if (err.type === "entity.parse.failed" || err instanceof SyntaxError) {
+    return res.status(400).json({ ok: false, error: "Malformed JSON body" });
+  }
+
   console.error(err);
   return res.status(500).json({ ok: false, error: "Internal server error" });
 }

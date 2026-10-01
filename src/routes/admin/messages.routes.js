@@ -5,6 +5,7 @@ const asyncHandler = require("../../utils/asyncHandler");
 const AppError = require("../../utils/AppError");
 const { validateBody } = require("../../utils/validate");
 const { protect, adminOnly } = require("../../middleware/auth");
+const { sendMessageReply } = require("../../utils/email");
 
 const router = express.Router();
 router.use(protect, adminOnly);
@@ -28,8 +29,14 @@ router.patch(
     }),
   ),
   asyncHandler(async (req, res) => {
+    const existing = await Message.findById(req.params.id);
+    if (!existing) throw new AppError("Message not found", 404);
+
+    // email only when this request is the one supplying a reply for the first time
+    const isNewReply = typeof req.body.reply === "string" && req.body.reply.trim() && req.body.reply !== existing.reply;
+
     const message = await Message.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
-    if (!message) throw new AppError("Message not found", 404);
+    if (isNewReply) await sendMessageReply(message);
     res.json({ ok: true, message });
   }),
 );

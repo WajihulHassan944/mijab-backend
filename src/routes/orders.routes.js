@@ -11,6 +11,8 @@ const AppError = require("../utils/AppError");
 const { validateBody } = require("../utils/validate");
 const { protect, optionalAuth } = require("../middleware/auth");
 const { publicWriteLimiter } = require("../middleware/rateLimit");
+const { notifyNewOrder, notifyOrderUpdate } = require("../utils/pusher");
+const { sendOrderConfirmation } = require("../utils/email");
 
 const router = express.Router();
 
@@ -112,7 +114,13 @@ router.post(
       session.endSession();
     }
 
-    res.status(201).json({ ok: true, order: order.toPublic() });
+    const publicOrder = order.toPublic();
+    // Awaited (not true fire-and-forget) so these finish before the
+    // serverless function freezes post-response; both helpers swallow their
+    // own errors, so a Pusher/Brevo outage never fails order placement.
+    await Promise.all([notifyNewOrder(publicOrder), sendOrderConfirmation(publicOrder)]);
+
+    res.status(201).json({ ok: true, order: publicOrder });
   }),
 );
 

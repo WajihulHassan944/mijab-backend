@@ -5,6 +5,7 @@ const asyncHandler = require("../../utils/asyncHandler");
 const AppError = require("../../utils/AppError");
 const { validateBody } = require("../../utils/validate");
 const { protect, adminOnly } = require("../../middleware/auth");
+const { notifyOrderUpdate } = require("../../utils/pusher");
 
 const router = express.Router();
 router.use(protect, adminOnly);
@@ -110,7 +111,9 @@ router.patch(
       order.status = req.body.status;
       await order.save(); // goes through the pre-validate hook so `stage` stays in sync with `status`
     }
-    res.json({ ok: true, matched: orders.length, orders: orders.map((o) => o.toPublic()) });
+    const publicOrders = orders.map((o) => o.toPublic());
+    await Promise.all(publicOrders.map((o) => notifyOrderUpdate(o)));
+    res.json({ ok: true, matched: orders.length, orders: publicOrders });
   }),
 );
 
@@ -126,10 +129,13 @@ router.patch(
   asyncHandler(async (req, res) => {
     const order = await Order.findOne({ orderId: req.params.id.trim().toUpperCase() });
     if (!order) throw new AppError("Order not found", 404);
+    const statusChanged = req.body.status && req.body.status !== order.status;
     if (req.body.status) order.status = req.body.status;
     if (typeof req.body.note === "string") order.note = req.body.note;
     await order.save();
-    res.json({ ok: true, order: order.toPublic() });
+    const publicOrder = order.toPublic();
+    if (statusChanged) await notifyOrderUpdate(publicOrder);
+    res.json({ ok: true, order: publicOrder });
   }),
 );
 
