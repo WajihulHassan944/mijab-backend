@@ -50,6 +50,16 @@ describe("products", () => {
   });
 });
 
+describe("public settings", () => {
+  it("exposes only the storefront-relevant fields, no auth required", async () => {
+    const res = await request(app).get("/api/settings");
+    expect(res.status).toBe(200);
+    expect(res.body.settings).toMatchObject({ deliveryFee: 200, freeOver: 0, cod: true, card: true, bank: true });
+    expect(res.body.settings.lowStockAt).toBeUndefined();
+    expect(res.body.settings.notifyOrders).toBeUndefined();
+  });
+});
+
 describe("promo validation", () => {
   it("is case-insensitive for valid codes", async () => {
     const res = await request(app).post("/api/promos/validate").send({ code: "welcome10" });
