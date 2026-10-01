@@ -1,0 +1,27 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Runs against an in-memory MongoDB replica set by default (tests/setup.js).
+      # To run against a real Atlas database instead, add a repo secret named
+      # TEST_MONGODB_URI pointing at a throwaway database and uncomment below.
+      - run: npm test
+        # env:
+        #   TEST_MONGODB_URI: ${{ secrets.TEST_MONGODB_URI }}

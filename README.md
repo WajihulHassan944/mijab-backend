@@ -4,6 +4,8 @@ REST API for the MIJAB storefront and admin panel. Node.js + Express + Mongoose
 (MongoDB Atlas), deployed as a single Vercel serverless function (`api/index.js`)
 that wraps the whole Express app.
 
+**Live**: https://mijab-backend.vercel.app/api
+
 ## Stack
 
 - Express 4 — routing, middleware
@@ -80,17 +82,35 @@ creates and deletes test data freely.
 
 ## Deploying to Vercel
 
-1. Push this repo to GitHub (already done if you're reading this from the repo).
+Already set up: the project `wajihulhassan944s-projects/mijab-backend` is
+linked to this GitHub repo, with `MONGODB_URI`, `JWT_SECRET`,
+`JWT_EXPIRES_IN` and `CORS_ORIGIN` set for both Production and Preview.
+`git push` to `main` deploys a new Preview; promote to Production from the
+Vercel dashboard or with `vercel deploy --prod`.
+
+**`CORS_ORIGIN` is currently `*`** — tighten it to the frontend's real
+deployed URL(s) (comma-separated for multiple) once that's live, via
+`vercel env rm CORS_ORIGIN production` then `vercel env add CORS_ORIGIN production`.
+
+Setting up a fresh project from scratch looks like:
+
+1. Push this repo to GitHub.
 2. Import the repo in Vercel as a new project.
 3. Add the environment variables from `.env.example` in the Vercel project
    settings (`MONGODB_URI`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `CORS_ORIGIN`).
-   Set `CORS_ORIGIN` to your frontend's deployed URL(s) once you know them
-   (comma-separated for multiple).
 4. Deploy. Every request is routed through `api/index.js` via the rewrite in
    `vercel.json`, so the whole Express app runs as one serverless function.
 5. Run `npm run seed` once against the production `MONGODB_URI` (from your
    machine, with `.env` pointed at the Atlas cluster) to create the admin
    account and starter catalog/promo data.
+
+## CI
+
+`.github/workflows/test.yml` runs the Jest suite on every push and PR to
+`main`, using an in-memory MongoDB replica set (no secrets required). To run
+CI against a real Atlas database instead, add a `TEST_MONGODB_URI` repo
+secret pointing at a throwaway database and uncomment the `env:` block in
+the workflow.
 
 ## Auth model
 
