@@ -6,6 +6,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const AppError = require("../utils/AppError");
 const { validateBody } = require("../utils/validate");
 const { protect } = require("../middleware/auth");
+const { authLimiter } = require("../middleware/rateLimit");
 
 const router = express.Router();
 
@@ -33,6 +34,7 @@ const updateSchema = z.object({
 // POST /api/auth/register
 router.post(
   "/register",
+  authLimiter,
   validateBody(registerSchema),
   asyncHandler(async (req, res) => {
     const existing = await User.findOne({ email: req.body.email });
@@ -47,6 +49,7 @@ router.post(
 // POST /api/auth/login
 router.post(
   "/login",
+  authLimiter,
   validateBody(loginSchema),
   asyncHandler(async (req, res) => {
     const { email, password } = req.body;

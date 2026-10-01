@@ -10,6 +10,7 @@ const asyncHandler = require("../utils/asyncHandler");
 const AppError = require("../utils/AppError");
 const { validateBody } = require("../utils/validate");
 const { protect, optionalAuth } = require("../middleware/auth");
+const { publicWriteLimiter } = require("../middleware/rateLimit");
 
 const router = express.Router();
 
@@ -36,6 +37,7 @@ const digits = (s) => (s || "").replace(/\D/g, "");
 // POST /api/orders — place an order (guest checkout, or attached to the signed-in user)
 router.post(
   "/",
+  publicWriteLimiter,
   optionalAuth,
   validateBody(placeOrderSchema),
   asyncHandler(async (req, res) => {
@@ -129,6 +131,7 @@ router.get(
 // POST /api/orders/track — public order tracking by id + phone number
 router.post(
   "/track",
+  publicWriteLimiter,
   validateBody(z.object({ id: z.string().trim().min(1), phone: z.string().trim().min(1) })),
   asyncHandler(async (req, res) => {
     const order = await Order.findOne({ orderId: req.body.id.trim().toUpperCase() });

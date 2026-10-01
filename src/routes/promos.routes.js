@@ -3,6 +3,7 @@ const { z } = require("zod");
 const Promo = require("../models/Promo");
 const asyncHandler = require("../utils/asyncHandler");
 const { validateBody } = require("../utils/validate");
+const { publicWriteLimiter } = require("../middleware/rateLimit");
 
 const router = express.Router();
 
@@ -11,6 +12,7 @@ const codeSchema = z.object({ code: z.string().trim().min(1).max(40) });
 // POST /api/promos/validate — used by the cart/checkout to preview a discount
 router.post(
   "/validate",
+  publicWriteLimiter,
   validateBody(codeSchema),
   asyncHandler(async (req, res) => {
     const code = req.body.code.toUpperCase();

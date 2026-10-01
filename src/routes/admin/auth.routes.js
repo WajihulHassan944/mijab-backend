@@ -6,6 +6,7 @@ const asyncHandler = require("../../utils/asyncHandler");
 const AppError = require("../../utils/AppError");
 const { validateBody } = require("../../utils/validate");
 const { protect, adminOnly } = require("../../middleware/auth");
+const { authLimiter } = require("../../middleware/rateLimit");
 
 const router = express.Router();
 
@@ -17,6 +18,7 @@ const loginSchema = z.object({
 // POST /api/admin/auth/login
 router.post(
   "/login",
+  authLimiter,
   validateBody(loginSchema),
   asyncHandler(async (req, res) => {
     const { email, password } = req.body;

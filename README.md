@@ -50,6 +50,34 @@ src/
    ```
    The API is at `http://localhost:4000/api`.
 
+## Testing
+
+```bash
+npm test
+```
+
+This runs the Jest + supertest suite in `tests/api.test.js` against every
+route — auth, order placement (including the stock transaction and its
+rollback on insufficient stock), promos, admin CRUD, CSV export, settings
+and analytics.
+
+By default it spins up a disposable in-memory MongoDB replica set (needed
+because order placement uses a transaction), which downloads a MongoDB
+binary (several hundred MB) the first time you run it — that download can
+be slow on a constrained network.
+
+If you'd rather run the suite against a real MongoDB Atlas cluster (much
+faster, no binary download), point it at a **throwaway** database on your
+cluster — the suite drops that database when it finishes, but never touches
+anything outside it:
+
+```bash
+TEST_MONGODB_URI="<your-atlas-uri>/mijab_test?retryWrites=true&w=majority" npm test
+```
+
+Never point `TEST_MONGODB_URI` at your real `mijab` database — the suite
+creates and deletes test data freely.
+
 ## Deploying to Vercel
 
 1. Push this repo to GitHub (already done if you're reading this from the repo).

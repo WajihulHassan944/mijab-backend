@@ -8,6 +8,10 @@ const { notFound, errorHandler } = require("./middleware/errorHandler");
 
 const app = express();
 
+// Vercel puts the function behind a proxy; this makes req.ip (used by the
+// rate limiter) reflect the real client from X-Forwarded-For.
+app.set("trust proxy", 1);
+
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(
   cors({

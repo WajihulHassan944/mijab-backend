@@ -3,6 +3,7 @@ const { z } = require("zod");
 const Message = require("../models/Message");
 const asyncHandler = require("../utils/asyncHandler");
 const { validateBody } = require("../utils/validate");
+const { publicWriteLimiter } = require("../middleware/rateLimit");
 
 const router = express.Router();
 
@@ -16,6 +17,7 @@ const contactSchema = z.object({
 // POST /api/contact — storefront contact form, lands in the admin inbox
 router.post(
   "/",
+  publicWriteLimiter,
   validateBody(contactSchema),
   asyncHandler(async (req, res) => {
     const message = await Message.create({ ...req.body, state: "unread" });

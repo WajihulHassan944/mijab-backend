@@ -1,7 +1,5 @@
 const mongoose = require("mongoose");
 
-const MONGODB_URI = process.env.MONGODB_URI;
-
 /**
  * Serverless functions can be invoked many times against a warm container,
  * so we cache the connection (and the in-flight connect promise) on the
@@ -15,14 +13,15 @@ if (!cached) {
 async function connectDB() {
   if (cached.conn) return cached.conn;
 
-  if (!MONGODB_URI) {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
     throw new Error("MONGODB_URI is not set. Add it to your environment variables.");
   }
 
   if (!cached.promise) {
     mongoose.set("strictQuery", true);
     cached.promise = mongoose
-      .connect(MONGODB_URI, {
+      .connect(uri, {
         maxPoolSize: 10,
         serverSelectionTimeoutMS: 10000,
       })
