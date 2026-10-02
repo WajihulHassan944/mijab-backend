@@ -90,6 +90,7 @@ router.post(
 
         const total = subtotal - discount + delivery;
         const orderId = await nextOrderId(session);
+        const isCardPayment = payment === "Debit or credit card";
 
         const created = await Order.create(
           [
@@ -103,6 +104,7 @@ router.post(
               total,
               promoCode: appliedPromoCode,
               status: "placed",
+              paymentStatus: isCardPayment ? "pending" : "not_required",
               name,
               address,
               city,
@@ -124,7 +126,10 @@ router.post(
     // serverless function freezes post-response; every helper below
     // swallows its own errors, so a Pusher/Brevo outage never fails order
     // placement.
-    const sideEffects = [notifyNewOrder(publicOrder), sendOrderConfirmation(publicOrder)];
+    const sideEffects = [notifyNewOrder(publicOrder)];
+    // Card orders aren't actually paid yet — the confirmation email goes out
+    // once the Safepay webhook confirms payment, not at order creation.
+    if (publicOrder.paymentStatus !== "pending") sideEffects.push(sendOrderConfirmation(publicOrder));
     if (settingsSnapshot?.notifyOrders) sideEffects.push(sendAdminNewOrderAlert(publicOrder, settingsSnapshot.email));
     if (settingsSnapshot?.notifyLowStock && lowStockHits.length) sideEffects.push(sendAdminLowStockAlert(lowStockHits, settingsSnapshot.email));
     await Promise.all(sideEffects);

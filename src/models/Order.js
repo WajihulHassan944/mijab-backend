@@ -40,6 +40,16 @@ const orderSchema = new mongoose.Schema(
     phone: { type: String, required: true, trim: true },
     payment: { type: String, required: true, trim: true },
 
+    // Online card payments (Safepay): "not_required" for COD/bank transfer,
+    // which never go through a gateway. "pending" until the webhook confirms
+    // the outcome — never trust the browser redirect alone for this.
+    paymentStatus: {
+      type: String,
+      enum: ["not_required", "pending", "paid", "failed"],
+      default: "not_required",
+    },
+    safepayTracker: { type: String, default: null },
+
     note: { type: String, default: "" }, // internal admin note
   },
   { timestamps: true },
@@ -74,6 +84,7 @@ orderSchema.methods.toPublic = function toPublic() {
     email: this.email,
     phone: this.phone,
     payment: this.payment,
+    paymentStatus: this.paymentStatus,
   };
 };
 

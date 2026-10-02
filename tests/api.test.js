@@ -1,19 +1,32 @@
 const request = require("supertest");
+const crypto = require("crypto");
 
 // app is required lazily, inside beforeAll, after tests/setup.js has set
 // MONGODB_URI to the in-memory replica set — connectDB() reads the env var
 // fresh on every call, so requiring app.js before or after that is fine,
 // but we wait anyway for clarity.
 let app;
-let User, Product, Promo, Message;
+let User, Product, Promo, Message, Order;
 
 beforeAll(() => {
+  // Fake-but-present Safepay credentials: enough for isConfigured() to be
+  // true and the 404/400 validation paths to be reachable, without ever
+  // making a real network call to Safepay (nothing in these tests does).
+  process.env.SAFEPAY_PUBLIC_KEY = process.env.SAFEPAY_PUBLIC_KEY || "sec_test";
+  process.env.SAFEPAY_SECRET_KEY = process.env.SAFEPAY_SECRET_KEY || "test-secret";
+  process.env.SAFEPAY_WEBHOOK_SECRET = process.env.SAFEPAY_WEBHOOK_SECRET || "test-webhook-secret";
+
   app = require("../src/app");
   User = require("../src/models/User");
   Product = require("../src/models/Product");
   Promo = require("../src/models/Promo");
   Message = require("../src/models/Message");
+  Order = require("../src/models/Order");
 });
+
+function signWebhook(payload) {
+  return crypto.createHmac("sha512", process.env.SAFEPAY_WEBHOOK_SECRET).update(Buffer.from(JSON.stringify(payload))).digest("hex");
+}
 
 async function seedCatalog() {
   await User.create({ name: "MIJAB Admin", email: "admin@mijab.com", password: "admin123", role: "admin" });
@@ -295,5 +308,104 @@ describe("admin analytics and customers", () => {
     const analytics = await request(app).get("/api/admin/analytics").set("Authorization", `Bearer ${admin}`);
     expect(analytics.status).toBe(200);
     expect(analytics.body.analytics.totals.orders).toBeGreaterThan(0);
+  });
+});
+
+describe("safepay checkout session", () => {
+  it("404s for an order that doesn't exist", async () => {
+    const res = await request(app).post("/api/payments/safepay/checkout").send({ orderId: "MJB-00000" });
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a checkout session for an order that isn't awaiting card payment", async () => {
+    await Product.updateOne({ slug: "cafe-noir" }, { $set: { stock: 10 } });
+    const placed = await request(app).post("/api/orders").send({
+      lines: [{ productId: "cafe-noir", qty: 1 }],
+      name: "COD Payment Session Test", address: "Addr", city: "City", email: "codpaysession@example.com", phone: "0301112222", payment: "Cash on delivery",
+    });
+    expect(placed.body.order.paymentStatus).toBe("not_required");
+
+    const res = await request(app).post("/api/payments/safepay/checkout").send({ orderId: placed.body.order.id });
+    expect(res.status).toBe(400);
+  });
+
+  it("marks a card order pending (not confirmed) until a webhook says otherwise", async () => {
+    await Product.updateOne({ slug: "cafe-noir" }, { $set: { stock: 10 } });
+    const placed = await request(app).post("/api/orders").send({
+      lines: [{ productId: "cafe-noir", qty: 1 }],
+      name: "Card Payment Session Test", address: "Addr", city: "City", email: "cardpaysession@example.com", phone: "0301112223", payment: "Debit or credit card",
+    });
+    expect(placed.status).toBe(201);
+    expect(placed.body.order.paymentStatus).toBe("pending");
+  });
+});
+
+describe("safepay webhook", () => {
+  it("rejects a webhook with an invalid signature", async () => {
+    const res = await request(app)
+      .post("/api/payments/safepay/webhook")
+      .set("x-sfpy-signature", "not-a-real-signature")
+      .send({ type: "payment.succeeded", data: { metadata: { order_id: "MJB-00000" } } });
+    expect(res.status).toBe(401);
+  });
+
+  it("marks the order paid on a correctly signed payment.succeeded event", async () => {
+    await Product.updateOne({ slug: "vanilla-gourmand" }, { $set: { stock: 10 } });
+    const placed = await request(app).post("/api/orders").send({
+      lines: [{ productId: "vanilla-gourmand", qty: 1 }],
+      name: "Webhook Success Test", address: "Addr", city: "City", email: "webhooksuccess@example.com", phone: "0301112224", payment: "Debit or credit card",
+    });
+    const orderId = placed.body.order.id;
+
+    const payload = { type: "payment.succeeded", data: { tracker: "track_test", metadata: { order_id: orderId }, amount: placed.body.order.total * 100, currency: "PKR" } };
+    const res = await request(app).post("/api/payments/safepay/webhook").set("x-sfpy-signature", signWebhook(payload)).send(payload);
+    expect(res.status).toBe(200);
+
+    const order = await Order.findOne({ orderId });
+    expect(order.paymentStatus).toBe("paid");
+  });
+
+  it("cancels the order and restores stock on a correctly signed payment.failed event", async () => {
+    // reset to a known baseline — earlier tests in this file share the same
+    // seeded products, so don't rely on however much they left behind
+    await Product.updateOne({ slug: "vanilla-gourmand" }, { $set: { stock: 10 } });
+
+    const placed = await request(app).post("/api/orders").send({
+      lines: [{ productId: "vanilla-gourmand", qty: 1 }],
+      name: "Webhook Failure Test", address: "Addr", city: "City", email: "webhookfailure@example.com", phone: "0301112225", payment: "Debit or credit card",
+    });
+    const orderId = placed.body.order.id;
+    expect((await Product.findOne({ slug: "vanilla-gourmand" })).stock).toBe(9); // reserved while pending
+
+    const payload = { type: "payment.failed", data: { tracker: "track_test", metadata: { order_id: orderId }, message: "card declined" } };
+    const res = await request(app).post("/api/payments/safepay/webhook").set("x-sfpy-signature", signWebhook(payload)).send(payload);
+    expect(res.status).toBe(200);
+
+    const order = await Order.findOne({ orderId });
+    expect(order.paymentStatus).toBe("failed");
+    expect(order.status).toBe("cancelled");
+    expect((await Product.findOne({ slug: "vanilla-gourmand" })).stock).toBe(10); // released back
+  });
+});
+
+describe("admin cancelling an order restores stock", () => {
+  it("releases reserved stock when an admin cancels a placed order", async () => {
+    const admin = await adminToken();
+    await Product.updateOne({ slug: "cafe-noir" }, { $set: { stock: 10 } });
+
+    const placed = await request(app).post("/api/orders").send({
+      lines: [{ productId: "cafe-noir", qty: 1 }],
+      name: "Admin Cancel Restock Test", address: "Addr", city: "City", email: "admincancelrestock@example.com", phone: "0301112226", payment: "Cash on delivery",
+    });
+    const orderId = placed.body.order.id;
+    expect((await Product.findOne({ slug: "cafe-noir" })).stock).toBe(9);
+
+    const cancelled = await request(app)
+      .patch(`/api/admin/orders/${orderId}`)
+      .set("Authorization", `Bearer ${admin}`)
+      .send({ status: "cancelled" });
+    expect(cancelled.status).toBe(200);
+
+    expect((await Product.findOne({ slug: "cafe-noir" })).stock).toBe(10);
   });
 });

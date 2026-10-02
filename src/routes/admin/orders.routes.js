@@ -1,6 +1,7 @@
 const express = require("express");
 const { z } = require("zod");
 const Order = require("../../models/Order");
+const Product = require("../../models/Product");
 const asyncHandler = require("../../utils/asyncHandler");
 const AppError = require("../../utils/AppError");
 const { validateBody } = require("../../utils/validate");
@@ -11,6 +12,12 @@ const router = express.Router();
 router.use(protect, adminOnly);
 
 const STATUSES = ["placed", "packed", "out", "delivered", "cancelled"];
+
+/** Releases the stock an order was holding once it's cancelled, so it isn't
+ * stuck unavailable for a sale that's never going to complete. */
+async function restoreStock(order) {
+  await Promise.all(order.lines.map((l) => Product.updateOne({ slug: l.productId }, { $inc: { stock: l.qty } })));
+}
 
 function buildFilter(query) {
   const filter = {};
@@ -108,8 +115,10 @@ router.patch(
     const ids = req.body.ids.map((id) => id.trim().toUpperCase());
     const orders = await Order.find({ orderId: { $in: ids } });
     for (const order of orders) {
+      const wasCancelled = order.status === "cancelled";
       order.status = req.body.status;
       await order.save(); // goes through the pre-validate hook so `stage` stays in sync with `status`
+      if (req.body.status === "cancelled" && !wasCancelled) await restoreStock(order);
     }
     const publicOrders = orders.map((o) => o.toPublic());
     await Promise.all(publicOrders.map((o) => notifyOrderUpdate(o)));
@@ -130,9 +139,11 @@ router.patch(
     const order = await Order.findOne({ orderId: req.params.id.trim().toUpperCase() });
     if (!order) throw new AppError("Order not found", 404);
     const statusChanged = req.body.status && req.body.status !== order.status;
+    const newlyCancelled = statusChanged && req.body.status === "cancelled";
     if (req.body.status) order.status = req.body.status;
     if (typeof req.body.note === "string") order.note = req.body.note;
     await order.save();
+    if (newlyCancelled) await restoreStock(order);
     const publicOrder = order.toPublic();
     if (statusChanged) await notifyOrderUpdate(publicOrder);
     res.json({ ok: true, order: publicOrder });
