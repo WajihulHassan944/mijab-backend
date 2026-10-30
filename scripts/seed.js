@@ -24,7 +24,7 @@ const PRODUCTS = [
     blurb: "Roasted coffee, leather and dark amber.",
     description:
       "A deep, dark fragrance built around freshly roasted coffee, warmed by leather and softened with tonka bean. Made for evenings that run long.",
-    price: 2500,
+    price: 3000,
     image: "/images/cafe-noir.jpg",
     swatch: "#141010",
     bag: "/images/bag-black.png",
@@ -43,7 +43,7 @@ const PRODUCTS = [
     blurb: "Vanilla orchid, praline and sandalwood.",
     description:
       "A warm, indulgent fragrance of vanilla orchid and praline, lifted by pear and a touch of pink pepper. Soft, lingering and unforgettable.",
-    price: 2500,
+    price: 3000,
     image: "/images/vanilla-gourmand.jpg",
     swatch: "#DCCBE6",
     bag: "/images/bag-pink.png",
@@ -61,8 +61,8 @@ const PRODUCTS = [
     tagline: "Two fragrances. One story.",
     blurb: "Café Noir and Vanilla Gourmand, together.",
     description: "Gift him, gift her, or keep both. The pair arrives together in a signature MIJAB bag.",
-    price: 4500,
-    compareAt: 5000,
+    price: 5500,
+    compareAt: 6000,
     image: "/images/duo.jpg",
     swatch: "#141010",
     notes: {

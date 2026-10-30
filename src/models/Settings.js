@@ -5,7 +5,7 @@ const settingsSchema = new mongoose.Schema(
     // singleton document; key is always "default"
     key: { type: String, default: "default", unique: true },
     storeName: { type: String, default: "MIJAB" },
-    email: { type: String, default: "hello@mijab.com" },
+    email: { type: String, default: "mjb_essence@outlook.com" },
     phone: { type: String, default: "0300 0000000" },
     deliveryFee: { type: Number, default: 200, min: 0 },
     freeOver: { type: Number, default: 0, min: 0 },
