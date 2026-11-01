@@ -32,6 +32,11 @@ function errorHandler(err, req, res, next) {
     return res.status(400).json({ ok: false, error: "Malformed JSON body" });
   }
 
+  if (err.name === "MulterError") {
+    const msg = err.code === "LIMIT_FILE_SIZE" ? "Image is too large (max 4MB)" : "Invalid file upload";
+    return res.status(400).json({ ok: false, error: msg });
+  }
+
   console.error(err);
   return res.status(500).json({ ok: false, error: "Internal server error" });
 }

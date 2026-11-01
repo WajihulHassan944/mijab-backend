@@ -1,4 +1,6 @@
 const express = require("express");
+const multer = require("multer");
+const { put } = require("@vercel/blob");
 const { z } = require("zod");
 const Product = require("../../models/Product");
 const asyncHandler = require("../../utils/asyncHandler");
@@ -8,6 +10,13 @@ const { protect, adminOnly } = require("../../middleware/auth");
 
 const router = express.Router();
 router.use(protect, adminOnly);
+
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 4 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(null, ALLOWED_IMAGE_TYPES.has(file.mimetype)),
+});
 
 const notesSchema = z.object({ top: z.string().optional(), heart: z.string().optional(), base: z.string().optional() }).optional();
 
@@ -68,6 +77,27 @@ router.patch(
       runValidators: true,
     });
     if (!product) throw new AppError("Product not found", 404);
+    res.json({ ok: true, product: product.toPublic() });
+  }),
+);
+
+// POST /api/admin/products/:id/image (id = slug) — replace a product's photo
+router.post(
+  "/:id/image",
+  upload.single("image"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) throw new AppError("Upload a JPEG, PNG, or WebP image under 4MB", 400);
+    const product = await Product.findOne({ slug: req.params.id.toLowerCase() });
+    if (!product) throw new AppError("Product not found", 404);
+
+    const ext = req.file.mimetype === "image/png" ? "png" : req.file.mimetype === "image/webp" ? "webp" : "jpg";
+    const blob = await put(`products/${product.slug}-${Date.now()}.${ext}`, req.file.buffer, {
+      access: "public",
+      contentType: req.file.mimetype,
+    });
+
+    product.image = blob.url;
+    await product.save();
     res.json({ ok: true, product: product.toPublic() });
   }),
 );
