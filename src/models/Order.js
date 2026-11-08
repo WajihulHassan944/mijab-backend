@@ -40,6 +40,10 @@ const orderSchema = new mongoose.Schema(
     phone: { type: String, required: true, trim: true },
     payment: { type: String, required: true, trim: true },
 
+    // "delivery" (to the address above) or "pickup" (customer collects it;
+    // no delivery fee, and address holds the store pickup location).
+    fulfillment: { type: String, enum: ["delivery", "pickup"], default: "delivery" },
+
     // Online card payments (Safepay): "not_required" for COD/bank transfer,
     // which never go through a gateway. "pending" until the webhook confirms
     // the outcome — never trust the browser redirect alone for this.
@@ -49,6 +53,13 @@ const orderSchema = new mongoose.Schema(
       default: "not_required",
     },
     safepayTracker: { type: String, default: null },
+
+    // Bank transfer proof: customer-uploaded screenshot of the bank
+    // transfer, stored on Cloudinary. Null until they visit /payment-proof.
+    paymentProof: {
+      url: { type: String, default: null },
+      uploadedAt: { type: Date, default: null },
+    },
 
     note: { type: String, default: "" }, // internal admin note
   },
@@ -84,7 +95,9 @@ orderSchema.methods.toPublic = function toPublic() {
     email: this.email,
     phone: this.phone,
     payment: this.payment,
+    fulfillment: this.fulfillment || "delivery",
     paymentStatus: this.paymentStatus,
+    paymentProofUrl: this.paymentProof?.url ?? null,
   };
 };
 

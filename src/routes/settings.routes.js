@@ -22,6 +22,8 @@ router.get(
         cod: s.cod,
         card: s.card,
         bank: s.bank,
+        pickup: s.pickup,
+        pickupAddress: s.pickupAddress,
       },
     });
   }),

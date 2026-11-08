@@ -67,7 +67,7 @@ describe("public settings", () => {
   it("exposes only the storefront-relevant fields, no auth required", async () => {
     const res = await request(app).get("/api/settings");
     expect(res.status).toBe(200);
-    expect(res.body.settings).toMatchObject({ deliveryFee: 200, freeOver: 0, cod: true, card: true, bank: true });
+    expect(res.body.settings).toMatchObject({ deliveryFee: 350, freeOver: 0, cod: true, card: true, bank: true });
     expect(res.body.settings.lowStockAt).toBeUndefined();
     expect(res.body.settings.notifyOrders).toBeUndefined();
   });
@@ -139,7 +139,7 @@ describe("order placement", () => {
     expect(res.status).toBe(201);
     const order = res.body.order;
     expect(order.id).toMatch(/^MJB-\d+$/);
-    expect(order).toMatchObject({ subtotal: 5000, discount: 500, delivery: 200, total: 4700, stage: 0, status: "placed" });
+    expect(order).toMatchObject({ subtotal: 5000, discount: 500, delivery: 350, total: 4850, stage: 0, status: "placed" });
 
     const cn = await Product.findOne({ slug: "cafe-noir" });
     expect(cn.stock).toBe(3);
@@ -186,6 +186,45 @@ describe("order placement", () => {
   });
 });
 
+describe("payment proof upload", () => {
+  // Built directly on the Order model, not through POST /api/orders, so
+  // these tests don't touch real product stock shared with other tests.
+  async function createBankTransferOrder(phone) {
+    return Order.create({
+      orderId: `MJB-PROOF-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+      lines: [{ productId: "cafe-noir", name: "Café Noir", price: 2500, qty: 1 }],
+      subtotal: 2500,
+      total: 2500,
+      name: "Bank Transfer Test",
+      address: "Addr",
+      city: "City",
+      email: "bank@example.com",
+      phone,
+      payment: "Bank transfer",
+    });
+  }
+
+  it("rejects a mismatched phone before ever touching Cloudinary", async () => {
+    const order = await createBankTransferOrder("0300-111-2222");
+
+    const wrongPhone = await request(app)
+      .post(`/api/orders/${order.orderId}/payment-proof`)
+      .field("phone", "0399999999")
+      .attach("image", Buffer.from([0x89, 0x50, 0x4e, 0x47]), "proof.png");
+    expect(wrongPhone.status).toBe(404);
+  });
+
+  it("returns a clear 503 when Cloudinary isn't configured", async () => {
+    const order = await createBankTransferOrder("03001112223");
+
+    const res = await request(app)
+      .post(`/api/orders/${order.orderId}/payment-proof`)
+      .field("phone", "03001112223")
+      .attach("image", Buffer.from([0x89, 0x50, 0x4e, 0x47]), "proof.png");
+    expect(res.status).toBe(503);
+  });
+});
+
 describe("admin orders", () => {
   it("lists orders and supports bulk status updates that keep stage in sync", async () => {
     const admin = await adminToken();
@@ -209,6 +248,101 @@ describe("admin orders", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
     expect(res.text.startsWith('"Order ID"')).toBe(true);
+  });
+});
+
+describe("admin status change emails the customer", () => {
+  const realFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = realFetch;
+    delete process.env.BREVO_API_KEY;
+    delete process.env.BREVO_SENDER_EMAIL;
+  });
+
+  it("sends a Brevo email on bulk and single status changes, with a review link once delivered", async () => {
+    process.env.BREVO_API_KEY = "test-key";
+    process.env.BREVO_SENDER_EMAIL = "store@example.com";
+    process.env.FRONTEND_URL = "https://shop.example.com";
+    const sent = [];
+    global.fetch = jest.fn(async (url, opts) => {
+      if (String(url).includes("brevo")) sent.push(JSON.parse(opts.body));
+      return { ok: true, text: async () => "" };
+    });
+
+    const order = await Order.create({
+      orderId: `MJB-MAIL-${Date.now()}`,
+      lines: [{ productId: "cafe-noir", name: "Café Noir", price: 2500, qty: 1 }],
+      subtotal: 2500, total: 2500, name: "Mail Test", address: "Addr", city: "City",
+      email: "mailtest@example.com", phone: "03001234567", payment: "Cash on delivery",
+    });
+    const admin = await adminToken();
+
+    await request(app).patch("/api/admin/orders/status").set("Authorization", `Bearer ${admin}`).send({ ids: [order.orderId], status: "packed" }).expect(200);
+    await request(app).patch(`/api/admin/orders/${order.orderId}`).set("Authorization", `Bearer ${admin}`).send({ status: "delivered" }).expect(200);
+    // same status again: no new email
+    await request(app).patch("/api/admin/orders/status").set("Authorization", `Bearer ${admin}`).send({ ids: [order.orderId], status: "delivered" }).expect(200);
+
+    const toCustomer = sent.filter((m) => m.to.some((r) => r.email === "mailtest@example.com"));
+    expect(toCustomer.map((m) => m.subject)).toEqual([`Your order is packed — ${order.orderId}`, `Your order has been delivered — ${order.orderId}`]);
+    expect(toCustomer[1].htmlContent).toContain(`https://shop.example.com/review?order=${order.orderId}`);
+  });
+});
+
+describe("reviews", () => {
+  async function makeOrder(status) {
+    return Order.create({
+      orderId: `MJB-REV-${Date.now()}-${Math.round(Math.random() * 1e4)}`,
+      lines: [{ productId: "cafe-noir", name: "Café Noir", price: 2500, qty: 1 }],
+      subtotal: 2500, total: 2500, name: "Sara Khan", address: "Addr", city: "Lahore, Punjab",
+      email: "sara@example.com", phone: "0300-555-1234", payment: "Cash on delivery", status,
+    });
+  }
+
+  it("only accepts reviews for delivered orders with the matching phone", async () => {
+    const pending = await makeOrder("out");
+    const notYet = await request(app).post("/api/reviews").send({ orderId: pending.orderId, phone: "03005551234", rating: 5, body: "Lovely scent, lasts all day." });
+    expect(notYet.status).toBe(400);
+
+    const delivered = await makeOrder("delivered");
+    const wrongPhone = await request(app).post("/api/reviews").send({ orderId: delivered.orderId, phone: "0399", rating: 5, body: "Lovely scent, lasts all day." });
+    expect(wrongPhone.status).toBe(404);
+
+    const elig = await request(app).post("/api/reviews/eligibility").send({ orderId: delivered.orderId.toLowerCase(), phone: "03005551234" });
+    expect(elig.body).toMatchObject({ eligible: true, name: "Sara Khan" });
+
+    const ok = await request(app).post("/api/reviews").send({ orderId: delivered.orderId, phone: "03005551234", rating: 4, body: "Lovely scent, lasts all day." });
+    expect(ok.status).toBe(201);
+
+    const dup = await request(app).post("/api/reviews").send({ orderId: delivered.orderId, phone: "03005551234", rating: 5, body: "Trying to review twice here." });
+    expect(dup.status).toBe(409);
+  });
+
+  it("keeps reviews off the public list until an admin approves them", async () => {
+    const order = await makeOrder("delivered");
+    const created = await request(app).post("/api/reviews").send({ orderId: order.orderId, phone: "03005551234", rating: 5, body: "Absolutely beautiful fragrance." });
+    const id = created.body.review.id;
+
+    let pub = await request(app).get("/api/reviews");
+    expect(pub.body.reviews.find((r) => r.id === id)).toBeUndefined();
+
+    const admin = await adminToken();
+    const pendingList = await request(app).get("/api/admin/reviews?status=pending").set("Authorization", `Bearer ${admin}`);
+    expect(pendingList.body.reviews.find((r) => r.id === id)).toMatchObject({ status: "pending", orderId: order.orderId, city: "Lahore" });
+
+    await request(app).patch(`/api/admin/reviews/${id}`).set("Authorization", `Bearer ${admin}`).send({ status: "approved" }).expect(200);
+    pub = await request(app).get("/api/reviews");
+    const shown = pub.body.reviews.find((r) => r.id === id);
+    expect(shown).toMatchObject({ rating: 5, name: "Sara Khan" });
+    expect(shown.email).toBeUndefined();
+    expect(shown.orderId).toBeUndefined();
+
+    await request(app).patch(`/api/admin/reviews/${id}`).set("Authorization", `Bearer ${admin}`).send({ status: "rejected" }).expect(200);
+    pub = await request(app).get("/api/reviews");
+    expect(pub.body.reviews.find((r) => r.id === id)).toBeUndefined();
+
+    await request(app).delete(`/api/admin/reviews/${id}`).set("Authorization", `Bearer ${admin}`).expect(200);
+    const noAuth = await request(app).get("/api/admin/reviews");
+    expect(noAuth.status).toBe(401);
   });
 });
 
@@ -272,7 +406,7 @@ describe("settings and free delivery threshold", () => {
   it("applies free delivery once the subtotal crosses the configured threshold", async () => {
     const admin = await adminToken();
     const defaults = await request(app).get("/api/admin/settings").set("Authorization", `Bearer ${admin}`);
-    expect(defaults.body.settings.deliveryFee).toBe(200);
+    expect(defaults.body.settings.deliveryFee).toBe(350);
 
     await request(app).patch("/api/admin/settings").set("Authorization", `Bearer ${admin}`).send({ freeOver: 1000 });
 
@@ -292,6 +426,45 @@ describe("settings and free delivery threshold", () => {
 
     // reset so other tests keep seeing the default delivery fee
     await request(app).patch("/api/admin/settings").set("Authorization", `Bearer ${admin}`).send({ freeOver: 0 });
+  });
+});
+
+describe("store pickup", () => {
+  beforeAll(async () => {
+    // own product so these orders don't eat stock other tests rely on
+    await Product.create({ slug: "pickup-test", sku: "MJB-PT-50", name: "Pickup Test", price: 1000, stock: 20, active: true });
+  });
+
+  const base = { lines: [{ productId: "pickup-test", qty: 1 }], name: "Pickup Test", email: "pickup@example.com", phone: "03004445555", payment: "Cash on delivery" };
+
+  it("charges no delivery fee and needs no address", async () => {
+    const admin = await adminToken();
+    await request(app).patch("/api/admin/settings").set("Authorization", `Bearer ${admin}`).send({ pickupAddress: "MIJAB Studio, F-7 Markaz, Islamabad (11am–7pm)" });
+
+    const pub = await request(app).get("/api/settings");
+    expect(pub.body.settings).toMatchObject({ pickup: true, pickupAddress: "MIJAB Studio, F-7 Markaz, Islamabad (11am–7pm)" });
+
+    const res = await request(app).post("/api/orders").send({ ...base, fulfillment: "pickup" });
+    expect(res.status).toBe(201);
+    expect(res.body.order).toMatchObject({ fulfillment: "pickup", delivery: 0, total: 1000, city: "Store pickup", address: "MIJAB Studio, F-7 Markaz, Islamabad (11am–7pm)" });
+
+    // the same order delivered still pays the fee
+    const delivered = await request(app).post("/api/orders").send({ ...base, address: "Addr", city: "City" });
+    expect(delivered.status).toBe(201);
+    expect(delivered.body.order).toMatchObject({ fulfillment: "delivery", delivery: 350, total: 1350 });
+  });
+
+  it("still requires an address for delivery orders", async () => {
+    const res = await request(app).post("/api/orders").send({ ...base });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects pickup when the admin has switched it off", async () => {
+    const admin = await adminToken();
+    await request(app).patch("/api/admin/settings").set("Authorization", `Bearer ${admin}`).send({ pickup: false });
+    const res = await request(app).post("/api/orders").send({ ...base, fulfillment: "pickup" });
+    expect(res.status).toBe(400);
+    await request(app).patch("/api/admin/settings").set("Authorization", `Bearer ${admin}`).send({ pickup: true, pickupAddress: "" });
   });
 });
 

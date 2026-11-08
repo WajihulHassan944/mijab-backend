@@ -3,6 +3,10 @@ const mongoose = require("mongoose");
 process.env.JWT_SECRET = process.env.JWT_SECRET || "test-secret";
 process.env.JWT_EXPIRES_IN = "1h";
 process.env.NODE_ENV = "test";
+// Never send real email from tests — individual tests that check email
+// behaviour set fake credentials and stub fetch themselves.
+delete process.env.BREVO_API_KEY;
+delete process.env.BREVO_SENDER_EMAIL;
 
 let replset;
 

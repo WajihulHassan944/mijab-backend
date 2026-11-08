@@ -1,5 +1,6 @@
 const express = require("express");
 const mongoose = require("mongoose");
+const multer = require("multer");
 const { z } = require("zod");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
@@ -12,9 +13,17 @@ const { validateBody } = require("../utils/validate");
 const { protect, optionalAuth } = require("../middleware/auth");
 const { publicWriteLimiter } = require("../middleware/rateLimit");
 const { notifyNewOrder, notifyOrderUpdate } = require("../utils/pusher");
-const { sendOrderConfirmation, sendAdminNewOrderAlert, sendAdminLowStockAlert } = require("../utils/email");
+const { sendOrderConfirmation, sendAdminNewOrderAlert, sendAdminPaymentProofAlert, sendAdminLowStockAlert } = require("../utils/email");
+const { uploadBuffer, isConfigured: isCloudinaryConfigured } = require("../utils/cloudinary");
 
 const router = express.Router();
+
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const uploadProof = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 4 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(null, ALLOWED_IMAGE_TYPES.has(file.mimetype)),
+});
 
 const placeOrderSchema = z.object({
   lines: z
@@ -27,8 +36,10 @@ const placeOrderSchema = z.object({
     .min(1, "Your bag is empty"),
   promoCode: z.string().trim().max(40).optional(),
   name: z.string().trim().min(1).max(120),
-  address: z.string().trim().min(1).max(300),
-  city: z.string().trim().min(1).max(120),
+  // required for delivery; ignored for store pickup (checked in the handler)
+  address: z.string().trim().max(300).optional().default(""),
+  city: z.string().trim().max(120).optional().default(""),
+  fulfillment: z.enum(["delivery", "pickup"]).optional().default("delivery"),
   email: z.string().trim().email(),
   phone: z.string().trim().min(5).max(30),
   payment: z.string().trim().min(1).max(60),
@@ -43,7 +54,10 @@ router.post(
   optionalAuth,
   validateBody(placeOrderSchema),
   asyncHandler(async (req, res) => {
-    const { lines, promoCode, name, address, city, email, phone, payment } = req.body;
+    const { lines, promoCode, name, email, phone, payment, fulfillment } = req.body;
+    let { address, city } = req.body;
+    const isPickup = fulfillment === "pickup";
+    if (!isPickup && (!address || !city)) throw new AppError("Please enter your delivery address and city", 400);
 
     const session = await mongoose.startSession();
     let order;
@@ -53,6 +67,11 @@ router.post(
       await session.withTransaction(async () => {
         const settings = await Settings.getSingleton();
         settingsSnapshot = settings;
+        if (isPickup) {
+          if (!settings.pickup) throw new AppError("Store pickup isn't available right now", 400);
+          address = settings.pickupAddress || "Store pickup — we'll contact you with the details";
+          city = "Store pickup";
+        }
 
         const orderLines = [];
         let subtotal = 0;
@@ -86,7 +105,7 @@ router.post(
         }
 
         let delivery = settings.deliveryFee;
-        if (settings.freeOver > 0 && subtotal >= settings.freeOver) delivery = 0;
+        if (isPickup || (settings.freeOver > 0 && subtotal >= settings.freeOver)) delivery = 0; // pickup never pays delivery
 
         const total = subtotal - discount + delivery;
         const orderId = await nextOrderId(session);
@@ -111,6 +130,7 @@ router.post(
               email: email.toLowerCase(),
               phone,
               payment,
+              fulfillment,
             },
           ],
           { session },
@@ -160,6 +180,41 @@ router.post(
     if (!order || digits(order.phone) !== digits(req.body.phone)) {
       throw new AppError("We couldn't find an order with that ID and phone number", 404);
     }
+    res.json({ ok: true, order: order.toPublic() });
+  }),
+);
+
+// POST /api/orders/:id/payment-proof — upload a bank transfer screenshot.
+// Public, but gated by the same id+phone pair /track uses, so a guessed
+// order id alone can't attach a proof image to someone else's order.
+router.post(
+  "/:id/payment-proof",
+  publicWriteLimiter,
+  uploadProof.single("image"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) throw new AppError("Upload a JPEG, PNG, or WebP image under 4MB", 400);
+
+    const phone = (req.body.phone || "").trim();
+    if (!phone) throw new AppError("Phone number is required", 400);
+
+    const order = await Order.findOne({ orderId: req.params.id.trim().toUpperCase() });
+    if (!order || digits(order.phone) !== digits(phone)) {
+      throw new AppError("We couldn't find an order with that ID and phone number", 404);
+    }
+
+    if (!isCloudinaryConfigured()) throw new AppError("Payment proof uploads aren't available right now", 503);
+
+    const result = await uploadBuffer(req.file.buffer, {
+      folder: "mijab/payment-proofs",
+      publicId: `${order.orderId}-${Date.now()}`,
+    });
+
+    order.paymentProof = { url: result.secure_url, uploadedAt: new Date() };
+    await order.save();
+
+    const settings = await Settings.getSingleton();
+    await sendAdminPaymentProofAlert(order.toPublic(), settings.email, result.secure_url).catch(() => {});
+
     res.json({ ok: true, order: order.toPublic() });
   }),
 );

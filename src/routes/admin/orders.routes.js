@@ -7,6 +7,7 @@ const AppError = require("../../utils/AppError");
 const { validateBody } = require("../../utils/validate");
 const { protect, adminOnly } = require("../../middleware/auth");
 const { notifyOrderUpdate } = require("../../utils/pusher");
+const { sendOrderStatusUpdate } = require("../../utils/email");
 
 const router = express.Router();
 router.use(protect, adminOnly);
@@ -68,7 +69,7 @@ router.get(
     const filter = buildFilter(req.query);
     const orders = await Order.find(filter).sort({ createdAt: -1 }).limit(5000);
 
-    const header = ["Order ID", "Date", "Status", "Customer", "Email", "Phone", "City", "Items", "Subtotal", "Discount", "Delivery", "Total", "Payment"];
+    const header = ["Order ID", "Date", "Status", "Customer", "Email", "Phone", "City", "Items", "Subtotal", "Discount", "Delivery", "Total", "Payment", "Fulfilment"];
     const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const rows = orders.map((o) =>
       [
@@ -85,6 +86,7 @@ router.get(
         o.delivery,
         o.total,
         o.payment,
+        o.fulfillment === "pickup" ? "Store pickup" : "Delivery",
       ]
         .map(escape)
         .join(","),
@@ -114,14 +116,20 @@ router.patch(
   asyncHandler(async (req, res) => {
     const ids = req.body.ids.map((id) => id.trim().toUpperCase());
     const orders = await Order.find({ orderId: { $in: ids } });
+    const changed = [];
     for (const order of orders) {
       const wasCancelled = order.status === "cancelled";
+      const statusChanged = order.status !== req.body.status;
       order.status = req.body.status;
       await order.save(); // goes through the pre-validate hook so `stage` stays in sync with `status`
       if (req.body.status === "cancelled" && !wasCancelled) await restoreStock(order);
+      if (statusChanged) changed.push(order);
     }
     const publicOrders = orders.map((o) => o.toPublic());
-    await Promise.all(publicOrders.map((o) => notifyOrderUpdate(o)));
+    await Promise.all([
+      ...publicOrders.map((o) => notifyOrderUpdate(o)),
+      ...changed.map((o) => sendOrderStatusUpdate(o.toPublic(), o.status)),
+    ]);
     res.json({ ok: true, matched: orders.length, orders: publicOrders });
   }),
 );
@@ -145,7 +153,7 @@ router.patch(
     await order.save();
     if (newlyCancelled) await restoreStock(order);
     const publicOrder = order.toPublic();
-    if (statusChanged) await notifyOrderUpdate(publicOrder);
+    if (statusChanged) await Promise.all([notifyOrderUpdate(publicOrder), sendOrderStatusUpdate(publicOrder, order.status)]);
     res.json({ ok: true, order: publicOrder });
   }),
 );

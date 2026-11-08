@@ -21,6 +21,8 @@ const updateSchema = z.object({
   notifyLowStock: z.boolean().optional(),
   notifyMessages: z.boolean().optional(),
   lowStockAt: z.number().min(0).optional(),
+  pickup: z.boolean().optional(),
+  pickupAddress: z.string().trim().max(400).optional(),
 });
 
 // GET /api/admin/settings

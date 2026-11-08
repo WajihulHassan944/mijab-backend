@@ -7,7 +7,7 @@ const settingsSchema = new mongoose.Schema(
     storeName: { type: String, default: "MIJAB" },
     email: { type: String, default: "mjb_essence@outlook.com" },
     phone: { type: String, default: "0300 0000000" },
-    deliveryFee: { type: Number, default: 200, min: 0 },
+    deliveryFee: { type: Number, default: 350, min: 0 },
     freeOver: { type: Number, default: 0, min: 0 },
     cod: { type: Boolean, default: true },
     card: { type: Boolean, default: true },
@@ -16,6 +16,9 @@ const settingsSchema = new mongoose.Schema(
     notifyLowStock: { type: Boolean, default: true },
     notifyMessages: { type: Boolean, default: false },
     lowStockAt: { type: Number, default: 10, min: 0 },
+    // Store pickup: customer collects the order themselves, no delivery fee.
+    pickup: { type: Boolean, default: true },
+    pickupAddress: { type: String, default: "", trim: true }, // where/when to collect; shown at checkout and in emails
   },
   { timestamps: true },
 );
