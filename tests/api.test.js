@@ -344,6 +344,25 @@ describe("reviews", () => {
     const noAuth = await request(app).get("/api/admin/reviews");
     expect(noAuth.status).toBe(401);
   });
+
+  it("filters approved reviews by product and summarises ratings per product", async () => {
+    const Review = require("../src/models/Review");
+    const base = { name: "Ali", city: "Rawalpindi", email: "ali@example.com", body: "Long lasting and elegant." };
+    await Review.create([
+      { ...base, orderId: "MJB-SUM-1", products: ["Summary Noir"], rating: 5, status: "approved" },
+      { ...base, orderId: "MJB-SUM-2", products: ["Summary Noir", "Summary Vanilla"], rating: 4, status: "approved" },
+      { ...base, orderId: "MJB-SUM-3", products: ["Summary Noir"], rating: 1, status: "pending" },
+    ]);
+
+    const noir = await request(app).get("/api/reviews?product=Summary%20Noir&limit=24").expect(200);
+    expect(noir.body.reviews).toHaveLength(2);
+    const vanilla = await request(app).get("/api/reviews?product=Summary%20Vanilla").expect(200);
+    expect(vanilla.body.reviews).toHaveLength(1);
+
+    const sum = await request(app).get("/api/reviews/summary").expect(200);
+    expect(sum.body.summary["Summary Noir"]).toEqual({ count: 2, average: 4.5 });
+    expect(sum.body.summary["Summary Vanilla"]).toEqual({ count: 1, average: 4 });
+  });
 });
 
 describe("admin products", () => {

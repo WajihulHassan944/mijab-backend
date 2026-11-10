@@ -18,8 +18,27 @@ router.get(
   "/",
   asyncHandler(async (req, res) => {
     const limit = Math.min(24, Math.max(1, parseInt(req.query.limit, 10) || 6));
-    const reviews = await Review.find({ status: "approved" }).sort({ createdAt: -1 }).limit(limit);
+    const filter = { status: "approved" };
+    // ?product=<product name> narrows to reviews of orders that included it (product pages).
+    if (typeof req.query.product === "string" && req.query.product.trim()) filter.products = req.query.product.trim();
+    const reviews = await Review.find(filter).sort({ createdAt: -1 }).limit(limit);
     res.json({ ok: true, reviews: reviews.map((r) => r.toPublic()) });
+  }),
+);
+
+// GET /api/reviews/summary — approved review count and average rating per
+// product name, for star ratings in search results. Counts every review,
+// unlike the list above, which is capped.
+router.get(
+  "/summary",
+  asyncHandler(async (req, res) => {
+    const rows = await Review.aggregate([
+      { $match: { status: "approved" } },
+      { $unwind: "$products" },
+      { $group: { _id: "$products", count: { $sum: 1 }, average: { $avg: "$rating" } } },
+    ]);
+    const summary = Object.fromEntries(rows.map((r) => [r._id, { count: r.count, average: Math.round(r.average * 10) / 10 }]));
+    res.json({ ok: true, summary });
   }),
 );
 
