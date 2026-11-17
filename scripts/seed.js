@@ -73,6 +73,22 @@ const PRODUCTS = [
     stock: 31,
     active: true,
   },
+  {
+    slug: "perfume-wax",
+    sku: "MJB-PW-01",
+    name: "Perfume Wax",
+    audience: "For Him & Her",
+    tagline: "Pure / Gentle / Alcohol-Free",
+    blurb: "A solid perfume balm, gift-boxed with a blessing.",
+    description:
+      "MIJAB Perfume Wax is a solid perfume: a smooth, alcohol-free balm you warm on your fingertip and press onto your wrists, neck and behind the ears. Gentle on skin, easy to carry, and presented in a black windowed gift bag that carries the words “Apply perfume, for it pleases Allah.” (Sunan Abu Dawood).",
+    price: 1200,
+    image: "/images/wax/perfume-wax.jpg",
+    swatch: "#EADBD3",
+    bagLabel: "Black windowed MIJAB gift bag",
+    stock: 50,
+    active: true,
+  },
 ];
 
 const PROMOS = [
